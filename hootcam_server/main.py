@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from . import auth
 from . import database
@@ -366,12 +368,25 @@ event_gap, pre_capture, post_capture), picture/movie output, and script hooks.
     openapi_url="/openapi.json",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: reflect the request's Origin so credentials work from any UI origin (browsers forbid * with credentials).
+class CORSReflectMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        origin = request.headers.get("origin")
+        if request.method == "OPTIONS":
+            response = Response(status_code=200)
+        else:
+            response = await call_next(request)
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Expose-Headers"] = "*"
+        if request.method == "OPTIONS":
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept"
+            response.headers["Access-Control-Max-Age"] = "600"
+        return response
+
+
+app.add_middleware(CORSReflectMiddleware)
 
 app.include_router(router)
