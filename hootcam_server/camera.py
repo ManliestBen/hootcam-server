@@ -10,10 +10,7 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any, List, Optional, Tuple
-
-# Type for sensor mode dict from picamera2 (size is (width, height))
-SENSOR_MODE = Any
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
