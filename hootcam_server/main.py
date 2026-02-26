@@ -57,6 +57,40 @@ CAPTURE_TIMEOUT_SEC = 15.0
 CAPTURE_TIMEOUT_FAILURE_THRESHOLD = 3
 
 
+def _lores_to_grayscale(arr: Any, lh: int, lw: int) -> Optional[Any]:
+    """Extract a 2D uint8 grayscale array from picamera2 lores capture (YUV420 or RGB).
+    Returns None if conversion fails. Caller can use for PIL and motion_detector.
+    """
+    if arr is None or not hasattr(arr, "ndim"):
+        return None
+    try:
+        import numpy as np
+        if arr.ndim == 3:
+            # RGB lores (e.g. Pi 5): (height, width, 3) -> take Y from R*0.299+G*0.587+B*0.114 or use first channel
+            h, w = arr.shape[0], min(arr.shape[1], lw)
+            if arr.shape[2] >= 3:
+                # Approximate grayscale from RGB
+                y = (
+                    arr[:lh, :w, 0].astype(np.uint16) * 77
+                    + arr[:lh, :w, 1].astype(np.uint16) * 150
+                    + arr[:lh, :w, 2].astype(np.uint16) * 29
+                ) // 256
+            else:
+                y = arr[:lh, :w, 0]
+            return np.clip(y, 0, 255).astype(np.uint8)
+        if arr.ndim == 2:
+            # YUV420: shape (height*3/2, width); Y = first height rows
+            total_rows, width = arr.shape[0], min(arr.shape[1], lw)
+            y_rows = total_rows * 2 // 3
+            y = arr[:y_rows, :width]
+            if y.dtype != np.uint8:
+                y = np.clip(y, 0, 255).astype(np.uint8)
+            return np.ascontiguousarray(y)
+        return None
+    except Exception:
+        return None
+
+
 async def _capture_array_with_timeout(
     loop: asyncio.AbstractEventLoop,
     camera_service: Any,
@@ -127,11 +161,12 @@ async def _capture_loop(
                 )
                 if arr is not None:
                     consecutive_timeouts = 0
-                    y = arr[:lh, :lw] if arr.ndim >= 2 else arr
-                    buf = io.BytesIO()
-                    Image.fromarray(y).convert("L").save(buf, format="JPEG", quality=global_config.stream_quality or 50)
-                    if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
-                        state["latest_jpeg"][camera_index] = buf.getvalue()
+                    y = _lores_to_grayscale(arr, lh, lw)
+                    if y is not None:
+                        buf = io.BytesIO()
+                        Image.fromarray(y).save(buf, format="JPEG", quality=global_config.stream_quality or 50)
+                        if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
+                            state["latest_jpeg"][camera_index] = buf.getvalue()
                 else:
                     consecutive_timeouts += 1
                     if camera_service and consecutive_timeouts == 1 and not restarted_after_timeout and getattr(camera_service, "restart_camera", None):
@@ -183,18 +218,19 @@ async def _capture_loop(
                 continue
             consecutive_timeouts = 0
 
-            y = arr[:lh, :lw] if arr.ndim >= 2 else arr
+            y = _lores_to_grayscale(arr, lh, lw)
             jpeg_bytes = None
-            try:
-                buf = io.BytesIO()
-                Image.fromarray(y).convert("L").save(buf, format="JPEG", quality=global_config.stream_quality or 85)
-                jpeg_bytes = buf.getvalue()
-                if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
-                    state["latest_jpeg"][camera_index] = jpeg_bytes
-            except Exception:
-                pass
+            if y is not None:
+                try:
+                    buf = io.BytesIO()
+                    Image.fromarray(y).save(buf, format="JPEG", quality=global_config.stream_quality or 85)
+                    jpeg_bytes = buf.getvalue()
+                    if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
+                        state["latest_jpeg"][camera_index] = jpeg_bytes
+                except Exception:
+                    pass
 
-            motion_detected, changed = motion_detector.update(y)
+            motion_detected, changed = motion_detector.update(y) if y is not None else (False, 0)
             now = datetime.utcnow()
 
             # On-demand snapshot (from UI "Take snapshot")
