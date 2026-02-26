@@ -17,6 +17,13 @@ from .api.schemas import CameraConfig
 logger = logging.getLogger(__name__)
 
 
+def _str_val(x: Any) -> str:
+    """Return string value from enum or str (config loaded from JSON may be str)."""
+    if x is None:
+        return ""
+    return getattr(x, "value", x) if not isinstance(x, str) else x
+
+
 def _expand_filename(
     template: str,
     event_id: int,
@@ -98,7 +105,7 @@ class RecordingSession:
         self._frame_count += 1
         ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
 
-        if self.config.picture_output and self.config.picture_output.value != "off":
+        if self.config.picture_output and _str_val(self.config.picture_output) != "off":
             pic_name = _expand_filename(
                 self.config.picture_filename or "%v-%Y%m%d%H%M%S-%q",
                 self.event_id,
@@ -106,8 +113,8 @@ class RecordingSession:
                 self.config.camera_name,
                 self._frame_count,
             )
-            pt = self.config.picture_type
-            ext = ".jpg" if (pt and pt.value == "jpeg") else ".webp" if (pt and pt.value == "webp") else ".jpg"
+            pt = _str_val(self.config.picture_type)
+            ext = ".jpg" if pt == "jpeg" else ".webp" if pt == "webp" else ".jpg"
             pic_path = self.target_dir / f"{pic_name}{ext}"
             try:
                 pic_path.write_bytes(jpeg_bytes)
@@ -141,7 +148,7 @@ class RecordingSession:
             return
 
         if self.config.movie_output and self._movie_frames:
-            codec = (self.config.movie_codec or "mkv").value
+            codec = _str_val(self.config.movie_codec) or "mkv"
             ext = ".mkv" if codec == "mkv" else ".mp4" if codec in ("mp4", "hevc") else ".avi"
             name = _expand_filename(
                 self.config.movie_filename or "%v-%Y%m%d%H%M%S",
