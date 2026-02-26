@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from .. import auth as auth_module
@@ -334,15 +334,16 @@ async def camera_stream(
     "/cameras/{camera_index}/current",
     tags=["Streams"],
     summary="Current frame (single JPEG)",
+    response_class=Response,
 )
-async def camera_current(camera_index: int) -> bytes:
+async def camera_current(camera_index: int) -> Response:
     state = get_state()
     if camera_index < 0 or camera_index >= len(state.get("latest_jpeg", [])):
         raise HTTPException(404, "Camera not found")
     jpeg = state["latest_jpeg"][camera_index]
     if not jpeg:
         raise HTTPException(503, "No frame available")
-    return jpeg
+    return Response(content=jpeg, media_type="image/jpeg")
 
 
 # --- Events & files ---
