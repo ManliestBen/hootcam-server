@@ -271,14 +271,20 @@ async def lifespan(app: FastAPI):
     camera_failed = [False, False]  # set True when a camera times out repeatedly; that camera is then skipped
 
     camera_service = None
+    camera_started = [False, False]  # which cameras actually started (e.g. only 0 if one camera)
     if DualCameraService is not None:
         camera_service = DualCameraService()
         w0, h0 = camera_configs[0].width or 640, camera_configs[0].height or 480
         w1, h1 = camera_configs[1].width or 640, camera_configs[1].height or 480
-        camera_service.start(
+        cam0_ok, cam1_ok = camera_service.start(
             w0, h0, camera_configs[0].framerate or 15,
             w1, h1, camera_configs[1].framerate or 15,
         )
+        camera_started[0], camera_started[1] = cam0_ok, cam1_ok
+        if not cam0_ok and not cam1_ok:
+            log.warning("No cameras started; check connections.")
+        elif not cam1_ok:
+            log.info("Camera 1 not available (single-camera setup or not connected).")
     else:
         log.warning("DualCameraService not available; capture disabled")
 
@@ -323,19 +329,20 @@ async def lifespan(app: FastAPI):
     tasks = []
     if camera_service is not None:
         for i in range(2):
-            t = asyncio.create_task(
-                _capture_loop(
-                    i,
-                    camera_service,
-                    motion_detectors[i],
-                    camera_configs[i],
-                    global_config,
-                    target_dir,
-                    db_path,
-                    app_state,
+            if camera_started[i]:
+                t = asyncio.create_task(
+                    _capture_loop(
+                        i,
+                        camera_service,
+                        motion_detectors[i],
+                        camera_configs[i],
+                        global_config,
+                        target_dir,
+                        db_path,
+                        app_state,
+                    )
                 )
-            )
-            tasks.append(t)
+                tasks.append(t)
     log.info("Hootcam Server started; API at /docs")
 
     yield
