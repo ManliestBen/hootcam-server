@@ -74,7 +74,7 @@ class RecordingSession:
         self._pre_capture_filled = False
         self._frame_count = 0
         self._movie_path: Optional[Path] = None
-        self._movie_frames: List[bytes] = []
+        self._movie_frames: List[tuple[bytes, datetime]] = []  # (jpeg, timestamp) for actual FPS
         self._started_at: Optional[datetime] = None
 
     def add_pre_capture_frame(self, jpeg_bytes: bytes, ts: datetime) -> None:
@@ -138,7 +138,7 @@ class RecordingSession:
                 logger.warning("Save picture failed: %s", e)
 
         if self.config.movie_output:
-            self._movie_frames.append(jpeg_bytes)
+            self._movie_frames.append((jpeg_bytes, ts))
 
     def end_event(self, ended_at: datetime) -> None:
         """Flush movie to file and run on_movie_end if set."""
@@ -158,7 +158,7 @@ class RecordingSession:
             )
             out_path = self.target_dir / f"{name}{ext}"
             try:
-                self._encode_movie(out_path)
+                self._encode_movie(out_path, self._movie_frames)
                 try:
                     rel = str(out_path.relative_to(self.target_dir))
                 except ValueError:
@@ -180,12 +180,21 @@ class RecordingSession:
             finally:
                 self._movie_frames.clear()
 
-    def _encode_movie(self, out_path: Path) -> None:
-        """Encode buffered JPEG frames to movie via ffmpeg (image2pipe)."""
-        if not self._movie_frames:
+    def _encode_movie(self, out_path: Path, frames_with_ts: List[tuple[bytes, datetime]]) -> None:
+        """Encode buffered JPEG frames to movie via ffmpeg (image2pipe). Uses actual elapsed time for FPS so playback speed is correct at any resolution."""
+        if not frames_with_ts:
             return
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        fps = self.config.framerate or 15
+        # Use actual time span so playback speed is correct when capture can't keep up at high res
+        first_ts = frames_with_ts[0][1]
+        last_ts = frames_with_ts[-1][1]
+        duration_sec = (last_ts - first_ts).total_seconds()
+        if duration_sec > 0 and len(frames_with_ts) > 1:
+            # N frames over duration_sec → fps = N/duration so output length matches real time
+            fps = len(frames_with_ts) / duration_sec
+            fps = max(1.0, min(120.0, fps))  # clamp to sane range
+        else:
+            fps = float(self.config.framerate or 15)
         cmd = [
             "ffmpeg", "-y",
             "-f", "image2pipe",
@@ -202,7 +211,7 @@ class RecordingSession:
             stderr=subprocess.PIPE,
         )
         assert proc.stdin is not None
-        for jpeg in self._movie_frames:
+        for jpeg, _ in frames_with_ts:
             proc.stdin.write(jpeg)
         proc.stdin.close()
         err = proc.stderr.read()

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -96,19 +97,45 @@ async def root() -> dict:
 
 # --- Config ---
 
+def _build_restart_argv() -> list[str]:
+    """Build argv to re-exec this server (uvicorn). Preserves --host/--port from current process."""
+    args = [sys.executable, "-m", "uvicorn", "hootcam_server.main:app"]
+    argv = sys.argv
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--host" and i + 1 < len(argv):
+            args.extend(["--host", argv[i + 1]])
+            i += 2
+            continue
+        if argv[i] == "--port" and i + 1 < len(argv):
+            args.extend(["--port", argv[i + 1]])
+            i += 2
+            continue
+        i += 1
+    if "--host" not in args:
+        args.extend(["--host", os.environ.get("UVICORN_HOST", "0.0.0.0")])
+    if "--port" not in args:
+        args.extend(["--port", os.environ.get("UVICORN_PORT", "8080")])
+    return args
+
+
 @router.post(
     "/restart",
     tags=["Configuration"],
     summary="Restart server",
-    description="Schedules a process exit so the server can be restarted by a process manager (systemd, Docker, etc.). Returns immediately; the process exits a few seconds later.",
+    description="Schedules a process re-exec so the server restarts in place (e.g. to apply resolution changes). Works when run as 'python -m uvicorn ...'. Host/port are preserved from the current command line or from UVICORN_HOST/UVICORN_PORT.",
 )
 async def restart_server() -> dict:
-    """Return 200 and schedule process exit so config changes (e.g. resolution) take effect."""
-    async def _exit_after_delay() -> None:
+    """Return 200 and schedule process re-exec so the server comes back with new config."""
+    async def _restart_after_delay() -> None:
         await asyncio.sleep(2)
+        try:
+            os.execv(sys.executable, _build_restart_argv())
+        except Exception:
+            pass
         os._exit(0)
 
-    asyncio.create_task(_exit_after_delay())
+    asyncio.create_task(_restart_after_delay())
     return {"message": "Server will restart shortly."}
 
 
