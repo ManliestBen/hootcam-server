@@ -25,6 +25,7 @@ from .api.routes import router
 from .api.schemas import CameraConfig, GlobalConfig
 from .config import (
     ensure_config_dir_and_db,
+    get_bootstrap_target_dir,
     load_camera_config,
     load_global_config,
     save_camera_config,
@@ -257,8 +258,10 @@ async def lifespan(app: FastAPI):
     _setup_logging(logging.INFO)
     log = logging.getLogger(__name__)
 
-    global_config = load_global_config()
-    db_path = ensure_config_dir_and_db(None, global_config.target_dir)
+    # Resolve config DB path first so we load and save from the same place.
+    bootstrap_target = get_bootstrap_target_dir()
+    db_path = ensure_config_dir_and_db(None, bootstrap_target)
+    global_config = load_global_config(db_path=db_path)
     auth.ensure_default_user(db_path)
     global_config.target_dir = global_config.target_dir or str(Path.cwd() / "data")
     target_dir = Path(global_config.target_dir)

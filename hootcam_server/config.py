@@ -85,6 +85,14 @@ def _default_target_dir() -> Path:
     return Path(os.getcwd())
 
 
+def get_bootstrap_target_dir() -> str:
+    """
+    Return the initial target directory used at startup (env or cwd).
+    Used so we can resolve the config DB path before loading config from it.
+    """
+    return os.environ.get("HOOTCAM_TARGET_DIR") or str(_default_target_dir())
+
+
 def get_auto_detected_ssd_path() -> Optional[str]:
     """
     Return the first auto-detected SSD mount path suitable for storage (with optional
