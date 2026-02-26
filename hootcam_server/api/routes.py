@@ -353,9 +353,11 @@ async def action_snapshot(camera_index: int) -> dict:
     state = get_state()
     if camera_index < 0 or camera_index >= len(state["camera_configs"]):
         raise HTTPException(404, "Camera not found")
-    # Signal snapshot requested; capture loop will write one snapshot
+    # Signal snapshot requested; capture loop will write one snapshot (cap queue to avoid unbounded growth)
     state.setdefault("snapshot_requests", {})
-    state["snapshot_requests"].setdefault(camera_index, []).append(1)
+    lst = state["snapshot_requests"].setdefault(camera_index, [])
+    if len(lst) < 10:
+        lst.append(1)
     return {"camera_index": camera_index, "requested": True}
 
 

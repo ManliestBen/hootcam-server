@@ -139,6 +139,10 @@ class RecordingSession:
 
         if self.config.movie_output:
             self._movie_frames.append((jpeg_bytes, ts))
+            # Cap to avoid unbounded memory during very long events (~15 min at 15 fps)
+            max_frames = 15000
+            while len(self._movie_frames) > max_frames:
+                self._movie_frames.pop(0)
 
     def end_event(self, ended_at: datetime) -> None:
         """Flush movie to file and run on_movie_end if set."""
