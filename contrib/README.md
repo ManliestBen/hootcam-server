@@ -2,7 +2,7 @@
 
 ## systemd service (run on boot)
 
-See the main [README](../README.md#running-as-a-service) for full instructions. Summary:
+Complete the main [Setup](../README.md#setup) first (venv with `--system-site-packages` and picamera2/ffmpeg). Then see the main [README](../README.md#running-as-a-service) for full instructions. Summary:
 
 1. Copy the unit file:  
    `sudo cp contrib/hootcam-server.service /etc/systemd/system/`

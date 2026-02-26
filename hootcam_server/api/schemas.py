@@ -115,7 +115,7 @@ class GlobalConfig(BaseModel):
 
     # stream_maxrate: Max framerate (fps) for stream. 100 = practically unlimited.
     stream_maxrate: Optional[int] = Field(
-        default=1,
+        default=15,
         ge=1,
         le=100,
         description="Limit stream framerate in fps. 100 = unlimited.",
@@ -336,8 +336,8 @@ class CameraConfig(BaseModel):
     # --- Movies ---
     # movie_output: Encode motion-triggered movies.
     movie_output: Optional[bool] = Field(
-        default=True,
-        description="Encode and save movies on motion (per event).",
+        default=False,
+        description="Encode and save movies on motion (per event). Off on install; enable in camera config when ready.",
     )
 
     # movie_output_motion: Save motion-type (debug) movies.

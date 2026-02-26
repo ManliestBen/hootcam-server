@@ -43,6 +43,8 @@ class DualCameraService:
         self._cam0: Optional[Any] = None
         self._cam1: Optional[Any] = None
         self._started = False
+        self._config0: Optional[Tuple[int, int, int]] = None  # (width, height, framerate)
+        self._config1: Optional[Tuple[int, int, int]] = None
 
     def start(
         self,
@@ -69,6 +71,7 @@ class DualCameraService:
                 )
             )
             self._cam0.start()
+            self._config0 = (width0, height0, framerate0)
             cam0_ok = True
             logger.info("Camera 0 started %dx%d @ %d fps", width0, height0, framerate0)
         except Exception as e:
@@ -83,6 +86,7 @@ class DualCameraService:
                 )
             )
             self._cam1.start()
+            self._config1 = (width1, height1, framerate1)
             cam1_ok = True
             logger.info("Camera 1 started %dx%d @ %d fps", width1, height1, framerate1)
         except Exception as e:
@@ -90,6 +94,56 @@ class DualCameraService:
 
         self._started = cam0_ok or cam1_ok
         return cam0_ok, cam1_ok
+
+    def restart_camera(self, camera_index: int) -> bool:
+        """
+        Stop and start one camera (e.g. after a timeout). Returns True if restart succeeded.
+        Uses the same width/height/framerate stored from start().
+        """
+        if Picamera2 is None:
+            return False
+        cfg = self._config0 if camera_index == 0 else self._config1
+        if cfg is None:
+            logger.warning("Cannot restart camera %d: no stored config", camera_index)
+            return False
+        w, h, fps = cfg
+        cam = self._cam0 if camera_index == 0 else self._cam1
+        if cam is not None:
+            try:
+                cam.stop()
+            except Exception as e:
+                logger.warning("Stop camera %d during restart: %s", camera_index, e)
+        if camera_index == 0:
+            self._cam0 = None
+        else:
+            self._cam1 = None
+
+        try:
+            if camera_index == 0:
+                self._cam0 = Picamera2(0)
+                self._cam0.configure(
+                    self._cam0.create_preview_configuration(
+                        main={"size": (w, h), "format": "RGB888"},
+                        controls={"FrameRate": fps},
+                    )
+                )
+                self._cam0.start()
+                logger.info("Camera 0 restarted %dx%d @ %d fps", w, h, fps)
+                return True
+            else:
+                self._cam1 = Picamera2(1)
+                self._cam1.configure(
+                    self._cam1.create_preview_configuration(
+                        main={"size": (w, h), "format": "RGB888"},
+                        controls={"FrameRate": fps},
+                    )
+                )
+                self._cam1.start()
+                logger.info("Camera 1 restarted %dx%d @ %d fps", w, h, fps)
+                return True
+        except Exception as e:
+            logger.exception("Failed to restart camera %d: %s", camera_index, e)
+            return False
 
     def stop(self) -> None:
         """Stop both cameras."""

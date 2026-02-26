@@ -47,6 +47,36 @@ def _setup_logging(level: int) -> None:
     )
 
 
+# Max time to wait for one frame before treating as camera timeout (e.g. V4L frontend timeout)
+CAPTURE_TIMEOUT_SEC = 15.0
+# Consecutive timeouts before we mark the camera as failed and stop calling it
+CAPTURE_TIMEOUT_FAILURE_THRESHOLD = 3
+
+
+async def _capture_array_with_timeout(
+    loop: asyncio.AbstractEventLoop,
+    camera_service: Any,
+    camera_index: int,
+    timeout: float,
+) -> Optional[Any]:
+    """Run blocking capture_array() in a thread; return None on timeout or error."""
+    if camera_service is None:
+        return None
+
+    def _capture() -> Optional[Any]:
+        return camera_service.capture_array(camera_index)
+
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, _capture),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return None
+    except Exception:
+        return None
+
+
 async def _capture_loop(
     camera_index: int,
     camera_service: Any,
@@ -57,10 +87,14 @@ async def _capture_loop(
     db_path: Path,
     state: dict,
 ) -> None:
-    """One loop per camera: capture -> motion -> record; update latest_jpeg."""
+    """One loop per camera: capture -> motion -> record; update latest_jpeg.
+    Capture runs in a thread with a timeout so a stuck camera (e.g. V4L timeout) doesn't lock the app.
+    On timeout we try to restart the camera once; after several consecutive timeouts we mark it failed.
+    """
     from PIL import Image
     import io
 
+    log = logging.getLogger(__name__)
     event_gap_sec = config.event_gap if config.event_gap is not None and config.event_gap >= 0 else 60
     post_capture = config.post_capture or 0
     pre_capture = config.pre_capture or 0
@@ -70,23 +104,77 @@ async def _capture_loop(
     post_frames_left = 0
     framerate = config.framerate or 15
     interval = 1.0 / framerate
+    consecutive_timeouts = 0
+    restarted_after_timeout = False
+
+    loop = asyncio.get_event_loop()
 
     while True:
         try:
+            if state.get("camera_failed") and state["camera_failed"][camera_index]:
+                await asyncio.sleep(interval)
+                continue
+
             if state["detection_paused"][camera_index]:
-                arr = camera_service.capture_array(camera_index) if camera_service else None
+                arr = await _capture_array_with_timeout(
+                    loop, camera_service, camera_index, CAPTURE_TIMEOUT_SEC
+                )
                 if arr is not None:
+                    consecutive_timeouts = 0
                     buf = io.BytesIO()
                     Image.fromarray(arr).save(buf, format="JPEG", quality=global_config.stream_quality or 50)
                     if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
                         state["latest_jpeg"][camera_index] = buf.getvalue()
+                else:
+                    consecutive_timeouts += 1
+                    if camera_service and consecutive_timeouts == 1 and not restarted_after_timeout and getattr(camera_service, "restart_camera", None):
+                        try:
+                            ok = await loop.run_in_executor(None, lambda: camera_service.restart_camera(camera_index))
+                            restarted_after_timeout = True
+                            if ok:
+                                consecutive_timeouts = 0
+                        except Exception:
+                            pass
+                    if consecutive_timeouts >= CAPTURE_TIMEOUT_FAILURE_THRESHOLD and state.get("camera_failed") is not None:
+                        state["camera_failed"][camera_index] = True
+                        log.error("Camera %d failed after %d consecutive timeouts; disabling.", camera_index, consecutive_timeouts)
                 await asyncio.sleep(interval)
                 continue
 
-            arr = camera_service.capture_array(camera_index) if camera_service else None
+            arr = await _capture_array_with_timeout(
+                loop, camera_service, camera_index, CAPTURE_TIMEOUT_SEC
+            )
             if arr is None:
+                consecutive_timeouts += 1
+                if camera_service is not None and consecutive_timeouts == 1 and not restarted_after_timeout:
+                    if getattr(camera_service, "restart_camera", None):
+                        log.warning(
+                            "Camera %d capture timed out (e.g. sensor disconnected). Attempting restart.",
+                            camera_index,
+                        )
+                        try:
+                            ok = await loop.run_in_executor(
+                                None,
+                                lambda: camera_service.restart_camera(camera_index),
+                            )
+                            restarted_after_timeout = True
+                            if ok:
+                                consecutive_timeouts = 0
+                                log.info("Camera %d restarted successfully.", camera_index)
+                        except Exception as e:
+                            log.exception("Camera %d restart failed: %s", camera_index, e)
+                if consecutive_timeouts >= CAPTURE_TIMEOUT_FAILURE_THRESHOLD:
+                    if state.get("camera_failed") is not None:
+                        state["camera_failed"][camera_index] = True
+                    log.error(
+                        "Camera %d failed after %d consecutive timeouts; disabling capture for this camera. "
+                        "Check cable/sensor. Restart the server to retry.",
+                        camera_index,
+                        consecutive_timeouts,
+                    )
                 await asyncio.sleep(interval)
                 continue
+            consecutive_timeouts = 0
 
             jpeg_bytes = None
             try:
@@ -178,6 +266,7 @@ async def lifespan(app: FastAPI):
     detection_paused = [camera_configs[0].pause or False, camera_configs[1].pause or False]
     current_event_id: list[Optional[int]] = [None, None]
     latest_jpeg: list[Optional[bytes]] = [None, None]
+    camera_failed = [False, False]  # set True when a camera times out repeatedly; that camera is then skipped
 
     camera_service = None
     if DualCameraService is not None:
@@ -223,6 +312,7 @@ async def lifespan(app: FastAPI):
         "detection_paused": detection_paused,
         "current_event_id": current_event_id,
         "latest_jpeg": latest_jpeg,
+        "camera_failed": camera_failed,
         "save_global_config": save_global,
         "save_camera_config": save_camera,
         "base_url": "http://localhost:8080",
