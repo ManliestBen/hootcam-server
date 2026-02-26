@@ -359,7 +359,9 @@ async def camera_current(camera_index: int) -> Response:
     jpeg = state["latest_jpeg"][camera_index]
     if not jpeg:
         raise HTTPException(503, "No frame available")
-    return Response(content=jpeg, media_type="image/jpeg")
+    # Ensure bytes so FastAPI doesn't try to JSON-serialize (e.g. if it was memoryview)
+    body = bytes(jpeg) if not isinstance(jpeg, bytes) else jpeg
+    return Response(content=body, media_type="image/jpeg")
 
 
 # --- Events & files ---
