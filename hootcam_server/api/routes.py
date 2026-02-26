@@ -310,6 +310,10 @@ async def detection_start(camera_index: int) -> dict:
     if camera_index < 0 or camera_index >= len(state["detection_paused"]):
         raise HTTPException(404, "Camera not found")
     state["detection_paused"][camera_index] = False
+    # Persist so detection state survives server restart
+    config = state["camera_configs"][camera_index]
+    config.pause = False
+    state["save_camera_config"](camera_index, config)
     return {"camera_index": camera_index, "paused": False}
 
 
@@ -323,6 +327,10 @@ async def detection_pause(camera_index: int) -> dict:
     if camera_index < 0 or camera_index >= len(state["detection_paused"]):
         raise HTTPException(404, "Camera not found")
     state["detection_paused"][camera_index] = True
+    # Persist so detection state survives server restart
+    config = state["camera_configs"][camera_index]
+    config.pause = True
+    state["save_camera_config"](camera_index, config)
     return {"camera_index": camera_index, "paused": True}
 
 

@@ -299,7 +299,11 @@ async def lifespan(app: FastAPI):
     target_dir.mkdir(parents=True, exist_ok=True)
 
     camera_configs = [load_camera_config(0, db_path=db_path), load_camera_config(1, db_path=db_path)]
-    detection_paused = [camera_configs[0].pause or False, camera_configs[1].pause or False]
+    # Default to paused (not detecting) when not set; pause is persisted in camera config.
+    detection_paused = [
+        camera_configs[0].pause if camera_configs[0].pause is not None else True,
+        camera_configs[1].pause if camera_configs[1].pause is not None else True,
+    ]
     current_event_id: list[Optional[int]] = [None, None]
     latest_jpeg: list[Optional[bytes]] = [None, None]
     camera_failed = [False, False]  # set True when a camera times out repeatedly; that camera is then skipped

@@ -273,10 +273,10 @@ class CameraConfig(BaseModel):
         description="Frames to capture after motion. Use for smooth videos (e.g. framerate * 5 for 5 sec).",
     )
 
-    # pause: Start with motion detection paused.
+    # pause: Motion detection paused (persisted; default True = not detecting until user starts).
     pause: Optional[bool] = Field(
-        default=False,
-        description="When on, motion detection is paused at start.",
+        default=True,
+        description="When true, motion detection is paused (no recording on motion). Persists across restarts. Use detection/start to resume.",
     )
 
     # emulate_motion: Always save (no motion required).
