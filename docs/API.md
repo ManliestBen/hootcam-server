@@ -261,7 +261,7 @@ Full path to executable (or script with shebang). Optional conversion specifiers
 |--------|------|---------|-------------|
 | **sql_log_picture** | boolean | false | If true, log each picture save to the database. |
 | **sql_log_movie** | boolean | true | If true, log each movie file to the database. |
-| **sql_log_snapshot** | boolean | false | If true, log snapshots to the database. |
+| **sql_log_snapshot** | boolean | true | If true, log snapshots to the database. |
 
 ---
 

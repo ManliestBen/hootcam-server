@@ -192,6 +192,37 @@ async def _capture_loop(
             motion_detected, changed = motion_detector.update(arr)
             now = datetime.utcnow()
 
+            # On-demand snapshot (from UI "Take snapshot")
+            requests = state.get("snapshot_requests") or {}
+            if requests.get(camera_index) and requests[camera_index] and jpeg_bytes:
+                requests[camera_index].pop()
+                try:
+                    name = recording._expand_filename(
+                        config.snapshot_filename or "%v-%Y%m%d%H%M%S-snapshot",
+                        0,
+                        config.camera_id,
+                        config.camera_name,
+                    )
+                    snap_path = target_dir / f"{name}.jpg"
+                    snap_path.parent.mkdir(parents=True, exist_ok=True)
+                    snap_path.write_bytes(jpeg_bytes)
+                    try:
+                        rel = str(snap_path.relative_to(target_dir))
+                    except ValueError:
+                        rel = str(snap_path)
+                    if config.sql_log_snapshot:
+                        database.log_file(
+                            db_path,
+                            None,
+                            camera_index,
+                            "snapshot",
+                            rel,
+                            now.strftime("%Y-%m-%d %H:%M:%S"),
+                            None,
+                        )
+                except Exception as e:
+                    log.warning("Snapshot save failed: %s", e)
+
             if recording_session is not None:
                 if motion_detected:
                     last_motion_at = now
@@ -324,6 +355,7 @@ async def lifespan(app: FastAPI):
         "current_event_id": current_event_id,
         "latest_jpeg": latest_jpeg,
         "camera_failed": camera_failed,
+        "snapshot_requests": {},  # camera_index -> list of pending on-demand snapshots
         "save_global_config": save_global,
         "save_camera_config": save_camera,
         "base_url": "http://localhost:8080",

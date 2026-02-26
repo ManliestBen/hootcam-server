@@ -456,7 +456,7 @@ class CameraConfig(BaseModel):
     # --- SQLite logging (we use SQLite only) ---
     sql_log_picture: Optional[bool] = Field(default=False, description="Log picture saves to database.")
     sql_log_movie: Optional[bool] = Field(default=True, description="Log movie file creation to database.")
-    sql_log_snapshot: Optional[bool] = Field(default=False, description="Log snapshots to database.")
+    sql_log_snapshot: Optional[bool] = Field(default=True, description="Log snapshots to database.")
 
     class Config:
         extra = "ignore"  # ignore unknown keys on PATCH

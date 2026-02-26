@@ -4,6 +4,7 @@ REST API routes. Full option descriptions are in schemas.py and appear in OpenAP
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any, Optional
@@ -94,6 +95,22 @@ async def root() -> dict:
 
 
 # --- Config ---
+
+@router.post(
+    "/restart",
+    tags=["Configuration"],
+    summary="Restart server",
+    description="Schedules a process exit so the server can be restarted by a process manager (systemd, Docker, etc.). Returns immediately; the process exits a few seconds later.",
+)
+async def restart_server() -> dict:
+    """Return 200 and schedule process exit so config changes (e.g. resolution) take effect."""
+    async def _exit_after_delay() -> None:
+        await asyncio.sleep(2)
+        os._exit(0)
+
+    asyncio.create_task(_exit_after_delay())
+    return {"message": "Server will restart shortly."}
+
 
 @router.get(
     "/config",
@@ -309,8 +326,9 @@ async def action_snapshot(camera_index: int) -> dict:
     state = get_state()
     if camera_index < 0 or camera_index >= len(state["camera_configs"]):
         raise HTTPException(404, "Camera not found")
-    # Signal snapshot requested; capture loop can write one snapshot
-    state.get("snapshot_requests", {}).setdefault(camera_index, []).append(1)
+    # Signal snapshot requested; capture loop will write one snapshot
+    state.setdefault("snapshot_requests", {})
+    state["snapshot_requests"].setdefault(camera_index, []).append(1)
     return {"camera_index": camera_index, "requested": True}
 
 
