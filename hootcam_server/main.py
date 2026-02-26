@@ -35,9 +35,10 @@ from .motion import MotionDetector
 
 # Optional camera service (picamera2 on Pi only)
 try:
-    from .camera import DualCameraService
+    from .camera import LORES_SIZE, DualCameraService
 except ImportError:
     DualCameraService = None  # type: ignore
+    LORES_SIZE = (320, 240)  # fallback when camera module not available
 
 # Global app state (set in lifespan)
 app_state: dict[str, Any] = {}
@@ -67,7 +68,7 @@ async def _capture_array_with_timeout(
         return None
 
     def _capture() -> Optional[Any]:
-        return camera_service.capture_array(camera_index)
+        return camera_service.capture_array(camera_index, "lores")
 
     try:
         return await asyncio.wait_for(
@@ -109,6 +110,8 @@ async def _capture_loop(
     interval = 1.0 / framerate
     consecutive_timeouts = 0
     restarted_after_timeout = False
+    use_hw_recording = getattr(camera_service, "start_event_recording", None) is not None
+    lh, lw = LORES_SIZE[1], LORES_SIZE[0]  # lores Y plane size (YUV420: first lh rows are Y)
 
     loop = asyncio.get_event_loop()
 
@@ -124,8 +127,9 @@ async def _capture_loop(
                 )
                 if arr is not None:
                     consecutive_timeouts = 0
+                    y = arr[:lh, :lw] if arr.ndim >= 2 else arr
                     buf = io.BytesIO()
-                    Image.fromarray(arr).save(buf, format="JPEG", quality=global_config.stream_quality or 50)
+                    Image.fromarray(y).convert("L").save(buf, format="JPEG", quality=global_config.stream_quality or 50)
                     if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
                         state["latest_jpeg"][camera_index] = buf.getvalue()
                 else:
@@ -179,17 +183,18 @@ async def _capture_loop(
                 continue
             consecutive_timeouts = 0
 
+            y = arr[:lh, :lw] if arr.ndim >= 2 else arr
             jpeg_bytes = None
             try:
                 buf = io.BytesIO()
-                Image.fromarray(arr).save(buf, format="JPEG", quality=85)
+                Image.fromarray(y).convert("L").save(buf, format="JPEG", quality=global_config.stream_quality or 85)
                 jpeg_bytes = buf.getvalue()
                 if state.get("latest_jpeg") is not None and camera_index < len(state["latest_jpeg"]):
                     state["latest_jpeg"][camera_index] = jpeg_bytes
             except Exception:
                 pass
 
-            motion_detected, changed = motion_detector.update(arr)
+            motion_detected, changed = motion_detector.update(y)
             now = datetime.utcnow()
 
             # On-demand snapshot (from UI "Take snapshot")
@@ -223,56 +228,110 @@ async def _capture_loop(
                 except Exception as e:
                     log.warning("Snapshot save failed: %s", e)
 
-            if recording_session is not None:
-                if motion_detected:
+            if use_hw_recording:
+                # HW path: recording is H.264/MP4 via CircularOutput2; we only start/stop and log.
+                in_event = state["current_event_id"][camera_index] is not None
+                if in_event:
+                    if motion_detected:
+                        last_motion_at = now
+                        post_frames_left = post_capture
+                    elif post_frames_left > 0:
+                        post_frames_left -= 1
+                    else:
+                        if last_motion_at and (now - last_motion_at).total_seconds() >= event_gap_sec:
+                            path = state.get("current_event_path") and camera_index < len(state["current_event_path"]) and state["current_event_path"][camera_index]
+                            if path and config.sql_log_movie:
+                                try:
+                                    rel = str(Path(path).relative_to(target_dir))
+                                except ValueError:
+                                    rel = path
+                                database.log_file(
+                                    db_path,
+                                    state["current_event_id"][camera_index],
+                                    camera_index,
+                                    "movie",
+                                    rel,
+                                    now.strftime("%Y-%m-%d %H:%M:%S"),
+                                    None,
+                                )
+                            database.log_event_end(db_path, state["current_event_id"][camera_index], now.strftime("%Y-%m-%d %H:%M:%S"))
+                            camera_service.stop_event_recording(camera_index)
+                            if config.on_event_end:
+                                recording.run_script_sync(config.on_event_end)
+                            state["current_event_id"][camera_index] = None
+                            if state.get("current_event_path") is not None and camera_index < len(state["current_event_path"]):
+                                state["current_event_path"][camera_index] = None
+                            last_motion_at = None
+                elif motion_detected:
+                    started_at_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    event_id = database.log_event_start(db_path, camera_index, config.camera_id, started_at_str)
+                    state["current_event_id"][camera_index] = event_id
+                    if config.movie_output:
+                        name = recording._expand_filename(
+                            config.movie_filename or "%v-%Y%m%d%H%M%S",
+                            event_id,
+                            config.camera_id,
+                            config.camera_name,
+                        )
+                        out_path = target_dir / f"{name}.mp4"
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        camera_service.start_event_recording(camera_index, str(out_path))
+                        if state.get("current_event_path") is not None and camera_index < len(state["current_event_path"]):
+                            state["current_event_path"][camera_index] = str(out_path)
                     last_motion_at = now
                     post_frames_left = post_capture
-                    recording_session.record_frame(jpeg_bytes or b"", now)
-                elif post_frames_left > 0:
-                    post_frames_left -= 1
-                    recording_session.record_frame(jpeg_bytes or b"", now)
-                else:
-                    # End event after event_gap with no motion
-                    if last_motion_at and (now - last_motion_at).total_seconds() >= event_gap_sec:
-                        database.log_event_end(db_path, state["current_event_id"][camera_index], now.strftime("%Y-%m-%d %H:%M:%S"))
-                        recording_session.end_event(now)
-                        if config.on_event_end:
-                            recording.run_script_sync(config.on_event_end)
-                        state["current_event_id"][camera_index] = None
-                        recording_session = None
-                        last_motion_at = None
-
-            elif motion_detected:
-                # Start new event
-                started_at_str = now.strftime("%Y-%m-%d %H:%M:%S")
-                event_id = database.log_event_start(db_path, camera_index, config.camera_id, started_at_str)
-                state["current_event_id"][camera_index] = event_id
-                recording_session = recording.RecordingSession(
-                    camera_index,
-                    config,
-                    target_dir,
-                    db_path,
-                    event_id,
-                    on_movie_end_script=config.on_movie_end,
-                    on_picture_save_script=config.on_picture_save,
-                )
-                for jb, ts in pre_buffer:
-                    recording_session.add_pre_capture_frame(jb, ts)
-                pre_buffer.clear()
-                recording_session.start_event(now)
-                recording_session.record_frame(jpeg_bytes or b"", now)
-                last_motion_at = now
-                post_frames_left = post_capture
-                if config.on_event_start:
-                    recording.run_script_sync(config.on_event_start)
-                if config.on_motion_detected:
-                    recording.run_script_sync(config.on_motion_detected)
+                    if config.on_event_start:
+                        recording.run_script_sync(config.on_event_start)
+                    if config.on_motion_detected:
+                        recording.run_script_sync(config.on_motion_detected)
             else:
-                # Not in event: keep pre_capture buffer
-                if pre_capture > 0 and jpeg_bytes:
-                    pre_buffer.append((jpeg_bytes, now))
-                    if len(pre_buffer) > pre_capture:
-                        pre_buffer.pop(0)
+                # Software path: RecordingSession + pre_buffer (JPEG -> ffmpeg)
+                if recording_session is not None:
+                    if motion_detected:
+                        last_motion_at = now
+                        post_frames_left = post_capture
+                        recording_session.record_frame(jpeg_bytes or b"", now)
+                    elif post_frames_left > 0:
+                        post_frames_left -= 1
+                        recording_session.record_frame(jpeg_bytes or b"", now)
+                    else:
+                        if last_motion_at and (now - last_motion_at).total_seconds() >= event_gap_sec:
+                            database.log_event_end(db_path, state["current_event_id"][camera_index], now.strftime("%Y-%m-%d %H:%M:%S"))
+                            recording_session.end_event(now)
+                            if config.on_event_end:
+                                recording.run_script_sync(config.on_event_end)
+                            state["current_event_id"][camera_index] = None
+                            recording_session = None
+                            last_motion_at = None
+                elif motion_detected:
+                    started_at_str = now.strftime("%Y-%m-%d %H:%M:%S")
+                    event_id = database.log_event_start(db_path, camera_index, config.camera_id, started_at_str)
+                    state["current_event_id"][camera_index] = event_id
+                    recording_session = recording.RecordingSession(
+                        camera_index,
+                        config,
+                        target_dir,
+                        db_path,
+                        event_id,
+                        on_movie_end_script=config.on_movie_end,
+                        on_picture_save_script=config.on_picture_save,
+                    )
+                    for jb, ts in pre_buffer:
+                        recording_session.add_pre_capture_frame(jb, ts)
+                    pre_buffer.clear()
+                    recording_session.start_event(now)
+                    recording_session.record_frame(jpeg_bytes or b"", now)
+                    last_motion_at = now
+                    post_frames_left = post_capture
+                    if config.on_event_start:
+                        recording.run_script_sync(config.on_event_start)
+                    if config.on_motion_detected:
+                        recording.run_script_sync(config.on_motion_detected)
+                else:
+                    if pre_capture > 0 and jpeg_bytes:
+                        pre_buffer.append((jpeg_bytes, now))
+                        if len(pre_buffer) > pre_capture:
+                            pre_buffer.pop(0)
 
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
@@ -305,6 +364,7 @@ async def lifespan(app: FastAPI):
         camera_configs[1].pause if camera_configs[1].pause is not None else True,
     ]
     current_event_id: list[Optional[int]] = [None, None]
+    current_event_path: list[Optional[str]] = [None, None]  # path opened for HW recording (for DB log)
     latest_jpeg: list[Optional[bytes]] = [None, None]
     camera_failed = [False, False]  # set True when a camera times out repeatedly; that camera is then skipped
 
@@ -314,9 +374,17 @@ async def lifespan(app: FastAPI):
         camera_service = DualCameraService()
         w0, h0 = camera_configs[0].width or 640, camera_configs[0].height or 480
         w1, h1 = camera_configs[1].width or 640, camera_configs[1].height or 480
+        fps0 = camera_configs[0].framerate or 15
+        fps1 = camera_configs[1].framerate or 15
+        pre0 = (camera_configs[0].pre_capture or 0) / max(1, fps0)
+        pre1 = (camera_configs[1].pre_capture or 0) / max(1, fps1)
+        pre_sec0 = max(1.0, pre0) if pre0 > 0 else 2.0
+        pre_sec1 = max(1.0, pre1) if pre1 > 0 else 2.0
         cam0_ok, cam1_ok = camera_service.start(
-            w0, h0, camera_configs[0].framerate or 15,
-            w1, h1, camera_configs[1].framerate or 15,
+            w0, h0, fps0,
+            w1, h1, fps1,
+            pre_capture_sec0=pre_sec0,
+            pre_capture_sec1=pre_sec1,
         )
         camera_started[0], camera_started[1] = cam0_ok, cam1_ok
         if not cam0_ok and not cam1_ok:
@@ -357,6 +425,7 @@ async def lifespan(app: FastAPI):
         "camera_service": camera_service,
         "detection_paused": detection_paused,
         "current_event_id": current_event_id,
+        "current_event_path": current_event_path,
         "latest_jpeg": latest_jpeg,
         "camera_failed": camera_failed,
         "snapshot_requests": {},  # camera_index -> list of pending on-demand snapshots
