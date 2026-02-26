@@ -5,13 +5,17 @@ REST API routes. Full option descriptions are in schemas.py and appear in OpenAP
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
+
+logger = logging.getLogger(__name__)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from .. import auth as auth_module
@@ -499,6 +503,27 @@ async def list_files(
     ]
 
 
+def _resolve_file_path(state: dict, file_id: int) -> tuple[dict, Path]:
+    """Resolve file_id to DB row and absolute path. Raises HTTPException if not found or invalid."""
+    row = database.get_file(state["db_path"], file_id)
+    if not row:
+        raise HTTPException(404, "File not found")
+    target_dir = Path(state["target_dir"])
+    file_path = Path(row["file_path"])
+    if file_path.is_absolute():
+        raise HTTPException(403, "Invalid file path")
+    try:
+        base = target_dir.resolve()
+        full_path = (target_dir / file_path).resolve()
+        if os.path.commonpath([base, full_path]) != str(base):
+            raise HTTPException(403, "Invalid file path")
+    except (ValueError, OSError):
+        raise HTTPException(403, "Invalid file path")
+    if not full_path.is_file():
+        raise HTTPException(404, "File not found on disk")
+    return row, full_path
+
+
 # Media type by file_type and extension
 _FILE_MEDIA_TYPES = {
     "picture": "image/jpeg",
@@ -536,29 +561,71 @@ def _media_type_for_path(file_path: str, file_type: str) -> str:
 async def get_file_content(file_id: int):
     """Serve a recorded file by its database id. Path is resolved under target_dir."""
     state = get_state()
-    row = database.get_file(state["db_path"], file_id)
-    if not row:
-        raise HTTPException(404, "File not found")
-    target_dir = Path(state["target_dir"])
-    file_path = Path(row["file_path"])
-    if file_path.is_absolute():
-        raise HTTPException(403, "Invalid file path")
-    # Resolve under target_dir to prevent path traversal
-    try:
-        base = target_dir.resolve()
-        full_path = (target_dir / file_path).resolve()
-        if os.path.commonpath([base, full_path]) != str(base):
-            raise HTTPException(403, "Invalid file path")
-    except (ValueError, OSError):
-        raise HTTPException(403, "Invalid file path")
-    if not full_path.is_file():
-        raise HTTPException(404, "File not found on disk")
+    row, full_path = _resolve_file_path(state, file_id)
     media_type = _media_type_for_path(row["file_path"], row["file_type"])
     return FileResponse(
         path=str(full_path),
         media_type=media_type,
         filename=full_path.name,
     )
+
+
+@router.get(
+    "/files/{file_id}/thumbnail",
+    tags=["Events & Files"],
+    summary="Thumbnail (first frame) for a video file",
+    description="Returns the first frame of a movie/timelapse as JPEG. Use in list views; load full video on click. 404 for non-video types.",
+    response_class=Response,
+)
+async def get_file_thumbnail(file_id: int):
+    """Return first frame of video as JPEG for list/thumbnail display. Only for movie/timelapse."""
+    state = get_state()
+    row, full_path = _resolve_file_path(state, file_id)
+    file_type = row.get("file_type") or ""
+    if file_type not in ("movie", "timelapse"):
+        raise HTTPException(404, "Thumbnail only for video files")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i", str(full_path),
+                "-vframes", "1",
+                "-q:v", "2",
+                "-f", "image2",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            logger.debug("ffmpeg thumbnail failed for %s: %s", full_path, result.stderr[:200] if result.stderr else "")
+            raise HTTPException(502, "Could not generate thumbnail")
+        return Response(content=result.stdout, media_type="image/jpeg")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Thumbnail generation timed out")
+    except FileNotFoundError:
+        raise HTTPException(503, "ffmpeg not available")
+
+
+@router.delete(
+    "/files/{file_id}",
+    status_code=204,
+    tags=["Events & Files"],
+    summary="Delete a file",
+    description="Deletes the file from disk and removes its record from the database.",
+)
+async def delete_file_route(file_id: int):
+    """Delete file from disk and database."""
+    state = get_state()
+    row, full_path = _resolve_file_path(state, file_id)
+    try:
+        full_path.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning("Could not delete file %s: %s", full_path, e)
+    deleted = database.delete_file(state["db_path"], file_id)
+    if not deleted:
+        raise HTTPException(404, "File not found")
 
 
 @router.get(

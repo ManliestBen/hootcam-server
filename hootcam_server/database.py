@@ -203,6 +203,17 @@ def get_files(
         conn.close()
 
 
+def delete_file(db_path: Path, file_id: int) -> bool:
+    """Delete a file record by id. Returns True if a row was deleted."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def config_get(db_path: Path, key: str) -> Optional[str]:
     """Get config value (JSON string)."""
     conn = sqlite3.connect(str(db_path))
