@@ -123,6 +123,16 @@ The service runs as user `pi`. If you use a different user, change `User=` and `
 
 See the **OpenAPI documentation** at `/docs` for full parameter descriptions.
 
+## Hardware encoding
+
+Recording uses the Pi’s **hardware H.264 encoder** for best framerate and low CPU use:
+
+- **Video config:** Each camera runs a main stream (full resolution, YUV420) plus a small **lores** stream (320×240). The main stream is encoded to H.264; the lores stream is used for motion detection and for building the live MJPEG feed.
+- **Motion-triggered clips:** When motion is detected, the server opens an output on picamera2’s **CircularOutput2** (with pre-capture from a ring buffer). Clips are written as **MP4** (H.264) via `PyavOutput`. When the event ends (after post-capture and event gap), the file is closed and optionally logged to SQLite.
+- **Live stream:** The UI still receives **MJPEG**; each frame is a small JPEG built from the lores Y plane (320×240 grayscale) so the capture loop can run at full framerate without encoding each frame in software.
+
+No ffmpeg is used for motion clips; the encoder output goes straight to MP4. Snapshots are currently 320×240 (from lores). Install picamera2 (and its dependencies, including PyAV if you use pip) as in [Setup](#setup).
+
 ## Troubleshooting
 
 ### Can't reach the server from another PC (e.g. http://pi-ip:8080/cameras/0/stream)
