@@ -237,6 +237,22 @@ async def patch_camera_config(camera_index: int, update: CameraConfig) -> Camera
     return current
 
 
+@router.get(
+    "/cameras/{camera_index}/resolutions",
+    tags=["Configuration"],
+    summary="List supported resolutions",
+    description="Returns hardware-supported (width, height, fps) modes for this camera. Empty if camera not available.",
+)
+async def get_camera_resolutions(camera_index: int) -> list[dict]:
+    state = get_state()
+    if camera_index < 0 or camera_index >= len(state["camera_configs"]):
+        raise HTTPException(404, "Camera not found")
+    cam = state.get("camera_service")
+    if cam is None or not getattr(cam, "get_sensor_modes", None):
+        return []
+    return cam.get_sensor_modes(camera_index)
+
+
 # --- Detection control ---
 
 @router.post(

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Optional, Tuple
+from typing import Any, List, Optional, Tuple
+
+# Type for sensor mode dict from picamera2 (size is (width, height))
+SENSOR_MODE = Any
 
 logger = logging.getLogger(__name__)
 
@@ -204,3 +207,33 @@ class DualCameraService:
         if camera_index == 1:
             return self._cam1 is not None
         return False
+
+    def get_sensor_modes(self, camera_index: int) -> List[dict]:
+        """
+        Return list of supported (width, height, fps) from the camera's sensor_modes.
+        Each item is {"width": int, "height": int, "fps": float}.
+        Returns [] if camera is not available or sensor_modes cannot be read.
+        """
+        cam = self._cam0 if camera_index == 0 else self._cam1
+        if cam is None:
+            return []
+        try:
+            modes = getattr(cam, "sensor_modes", None)
+            if not modes:
+                return []
+            by_size: dict[Tuple[int, int], int] = {}
+            for m in modes:
+                size = m.get("size")
+                fps = m.get("fps")
+                if not size or len(size) != 2:
+                    continue
+                w, h = int(size[0]), int(size[1])
+                fps_val = int(fps) if isinstance(fps, (int, float)) and fps is not None else 0
+                key = (w, h)
+                by_size[key] = max(by_size.get(key, 0), fps_val)
+            result = [{"width": w, "height": h, "fps": f} for (w, h), f in by_size.items()]
+            result.sort(key=lambda x: (-x["width"] * x["height"], -x["fps"]))
+            return result
+        except Exception as e:
+            logger.debug("get_sensor_modes %d: %s", camera_index, e)
+            return []
