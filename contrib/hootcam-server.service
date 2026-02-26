@@ -1,0 +1,26 @@
+[Unit]
+Description=Hootcam Server - owl box camera application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# Install path: change if you cloned or copied hootcam-server elsewhere
+WorkingDirectory=/home/pi/hootcam-server
+ExecStart=/home/pi/hootcam-server/.venv/bin/uvicorn hootcam_server.main:app --host 0.0.0.0 --port 8080
+
+# Optional: set target dir for recordings (e.g. SSD). Create the file and uncomment.
+# EnvironmentFile=/etc/hootcam-server.env
+
+# Restart on failure
+Restart=always
+RestartSec=5
+
+# Security: no new privileges, restrict system calls if desired
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

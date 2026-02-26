@@ -1,0 +1,29 @@
+# Hootcam Server - Owl box camera application for Raspberry Pi 5
+# Python 3.11+
+
+# API & server
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# Database
+aiosqlite>=0.19.0
+
+# Image/video
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# Optional: install on Pi for real camera support
+# picamera2>=0.3.0  # Raspberry Pi only; use system package: sudo apt install -y python3-picamera2
+
+# Optional: for motion detection (OpenCV is heavy; we use simple frame-diff by default)
+# opencv-python-headless>=4.8.0  # Uncomment for advanced motion or mask support
+
+# Config & env
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Auth (single user, password hash)
+bcrypt>=4.0.0
+
+# Async
+anyio>=4.0.0
