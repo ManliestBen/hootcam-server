@@ -1,8 +1,8 @@
 # Hootcam Server
 
-Backend for the Hootcam owl box camera system: **Raspberry Pi 5** dual CSI cameras, motion detection, and motion-triggered recording to SSD. REST API and SQLite for metadata. Use this repo together with a separate frontend (e.g. **hootcam-ui**).
+Backend for the Hootcam owl box camera system: **Raspberry Pi 5** dual CSI cameras, motion detection, and motion-triggered recording to SSD. REST API and SQLite for metadata. Use this repo together with a separate frontend (e.g. [**hootcam-ui**](https://github.com/ManliestBen/hootcam-ui)).
 
-**Alternative: 3-part architecture.** If the Pi is overloaded, you can split into: **(1) Hootcam Streamer** on the Pi (RTSP only, no motion), **(2) Hootcam Motion** on a NUC (consumes RTSP, runs motion + recording + API), and **(3) Hootcam UI** (points at the NUC). See the **hootcam-streamer** and **hootcam-motion** repos. This repo remains the **all-in-one** server for those who run everything on the Pi.
+**Alternative: 3-part architecture.** If the Pi is overloaded, you can split into: **(1) [Hootcam Streamer](https://github.com/ManliestBen/hootcam-streamer)** on the Pi (RTSP only, no motion), **(2) [Hootcam Motion](https://github.com/ManliestBen/hootcam-motion)** on a NUC (consumes RTSP, runs motion + recording + API), and **(3) [Hootcam UI](https://github.com/ManliestBen/hootcam-ui)** (points at the NUC). This repo remains the **all-in-one** server for those who run everything on the Pi.
 
 ## Features
 
@@ -210,6 +210,12 @@ hootcam-server/
 │       ├── routes.py    # All API routes
 │       └── schemas.py   # Pydantic models for config options
 ```
+
+## See also
+
+- [**Hootcam UI**](https://github.com/ManliestBen/hootcam-ui) – Web frontend for this server (or for Hootcam Motion in the 3-part setup).
+- [**Hootcam Streamer**](https://github.com/ManliestBen/hootcam-streamer) – RTSP-only streamer for the Pi; use with Hootcam Motion for the 3-part architecture.
+- [**Hootcam Motion**](https://github.com/ManliestBen/hootcam-motion) – NUC app that consumes RTSP and runs motion + recording + API; alternative to running everything on the Pi.
 
 ## License
 
