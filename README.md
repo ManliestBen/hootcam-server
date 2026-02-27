@@ -1,6 +1,8 @@
 # Hootcam Server
 
-Backend for the Hootcam owl box camera system: **Raspberry Pi 5** dual CSI cameras, motion detection, and motion-triggered recording to SSD. REST API and SQLite for metadata. Use this repo together with a separate frontend (e.g. **hootcam** or **hootcam-ui**).
+Backend for the Hootcam owl box camera system: **Raspberry Pi 5** dual CSI cameras, motion detection, and motion-triggered recording to SSD. REST API and SQLite for metadata. Use this repo together with a separate frontend (e.g. **hootcam-ui**).
+
+**Alternative: 3-part architecture.** If the Pi is overloaded, you can split into: **(1) Hootcam Streamer** on the Pi (RTSP only, no motion), **(2) Hootcam Motion** on a NUC (consumes RTSP, runs motion + recording + API), and **(3) Hootcam UI** (points at the NUC). See the **hootcam-streamer** and **hootcam-motion** repos. This repo remains the **all-in-one** server for those who run everything on the Pi.
 
 ## Features
 
@@ -148,7 +150,7 @@ If "site can't be reached" or connection refused from another machine:
    ```
    From the other PC, try `ping <pi-ip>`. Then try `http://<pi-ip>:8080/` in a browser (you'll get a 401 or a JSON response if the server is reachable; the login prompt or API response means it's working).
 
-4. **All endpoints require HTTP Basic auth.** In the browser, when you open the stream URL you'll be prompted for username and password (default `admin` / `admin`). For the UI, set `VITE_HOOTCAM_SERVER_URL=http://<pi-ip>:8080` so the app talks to the Pi.
+4. **All endpoints require HTTP Basic auth.** In the browser, when you open the stream URL you'll be prompted for username and password (default `admin` / `admin`). For the UI, set `VITE_HOOTCAM_STREAMER_URL=http://<pi-ip>:8080` so the app talks to the Pi.
 
 ### "picamera2 not available; cameras disabled"
 

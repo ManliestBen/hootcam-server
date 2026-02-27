@@ -1,4 +1,6 @@
-# Hootcam Server API Reference
+# Hootcam Server / Hootcam Motion API Reference
+
+This document describes the REST API exposed by **Hootcam Server** (all-in-one on the Pi) and by **Hootcam Motion** (NUC app that consumes RTSP streams). The API is the same; only the video source differs (direct cameras vs RTSP). For Hootcam Motion, configure each camera’s `stream_url` (RTSP) instead of hardware resolution.
 
 - **Swagger UI**: `GET /docs`
 - **ReDoc**: `GET /redoc`
